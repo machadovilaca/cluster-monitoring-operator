@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
 	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 )
 
@@ -46,17 +47,17 @@ func TestPrometheusPolicyHeaders(t *testing.T) {
 }
 
 func checkHeaders(t *testing.T, host string, sa string, query string) {
-	var client *framework.PrometheusClient
+	var client *prometheus.Client
 
 	err := framework.Poll(5*time.Second, 5*time.Minute, func() error {
-		token, err := f.GetServiceAccountToken(f.Ns, sa)
+		token, err := prometheus.GetServiceAccountToken(f.OperatorClient, f.Ns, sa)
 		if err != nil {
 			return err
 		}
-		client = framework.NewPrometheusClient(
+		client = prometheus.NewClientFromHostToken(
 			host,
 			token,
-			&framework.QueryParameterInjector{
+			&prometheus.QueryParameterInjector{
 				Name:  "namespace",
 				Value: f.Ns,
 			},

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package framework
+package prometheus
 
 import (
 	"bytes"
@@ -27,13 +27,14 @@ import (
 	"time"
 
 	"github.com/Jeffail/gabs"
-	routev1 "github.com/openshift/client-go/route/clientset/versioned/typed/route/v1"
-
+	routev1 "github.com/openshift/api/route/v1"
+	"github.com/openshift/cluster-monitoring-operator/pkg/client"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-// PrometheusClient provides access to the Prometheus, Thanos & Alertmanager API.
-type PrometheusClient struct {
+// Client provides access to the Prometheus, Thanos & Alertmanager API.
+type Client struct {
 	// Host address of the endpoint.
 	host string
 	// Bearer token to use for authentication.
@@ -42,28 +43,28 @@ type PrometheusClient struct {
 	rt http.RoundTripper
 }
 
-// NewPrometheusClientFromRoute creates and returns a new PrometheusClient from the given OpenShift route.
-func NewPrometheusClientFromRoute(
-	ctx context.Context,
-	routeClient routev1.RouteV1Interface,
-	namespace, name string,
-	token string,
-) (*PrometheusClient, error) {
-	route, err := routeClient.Routes(namespace).Get(ctx, name, metav1.GetOptions{})
+// NewClientFromRoute creates a new Client for the Prometheus instance in the given namespace and route name.
+func NewClientFromRoute(ctx context.Context, cmoClient *client.Client, namespace, routeName string) (*Client, error) {
+	prometheusURL, err := cmoClient.GetRouteURL(ctx, &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      routeName,
+			Namespace: cmoClient.Namespace(),
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	return NewPrometheusClient(route.Spec.Host, token), nil
+	token, err := GetServiceAccountToken(cmoClient, cmoClient.Namespace(), routeName)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewClientFromHostToken(prometheusURL.Host, token), nil
 }
 
-// WrapTransporter wraps an http.RoundTripper with another.
-type WrapTransporter interface {
-	WrapTransport(rt http.RoundTripper) http.RoundTripper
-}
-
-// NewPrometheusClient creates and returns a new PrometheusClient.
-func NewPrometheusClient(host, token string, wts ...WrapTransporter) *PrometheusClient {
+// NewClientFromHostToken creates and returns a new Client with the given host and bearer token.
+func NewClientFromHostToken(host, token string, wts ...WrapTransporter) *Client {
 	// #nosec
 	var rt http.RoundTripper = &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -73,10 +74,15 @@ func NewPrometheusClient(host, token string, wts ...WrapTransporter) *Prometheus
 	for i := range wts {
 		rt = wts[i].WrapTransport(rt)
 	}
-	return &PrometheusClient{
+	return &Client{
 		host: host,
 		rt:   rt,
 	}
+}
+
+// WrapTransporter wraps an http.RoundTripper with another.
+type WrapTransporter interface {
+	WrapTransport(rt http.RoundTripper) http.RoundTripper
 }
 
 // MaxLength is the maximum string length returned by ClampMax().
@@ -92,7 +98,7 @@ func ClampMax(b []byte) string {
 }
 
 // Do sends an HTTP request to the remote endpoint and returns the response.
-func (c *PrometheusClient) Do(method string, path string, body []byte) (*http.Response, error) {
+func (c *Client) Do(method string, path string, body []byte) (*http.Response, error) {
 	u, err := url.Parse(path)
 	if err != nil {
 		return nil, err
@@ -151,11 +157,11 @@ func (qp *QueryParameterInjector) WrapTransport(rt http.RoundTripper) http.Round
 
 // PrometheusQuery runs an HTTP GET request against the Prometheus query API and returns
 // the response body.
-func (c *PrometheusClient) PrometheusQuery(query string) ([]byte, error) {
+func (c *Client) PrometheusQuery(query string) ([]byte, error) {
 	return c.PrometheusQueryWithStatus(query, http.StatusOK)
 }
 
-func (c *PrometheusClient) PrometheusQueryWithStatus(query string, status int) ([]byte, error) {
+func (c *Client) PrometheusQueryWithStatus(query string, status int) ([]byte, error) {
 	resp, err := c.Do("GET", fmt.Sprintf("/api/v1/query?query=%s", url.QueryEscape(query)), nil)
 	if err != nil {
 		return nil, err
@@ -176,7 +182,7 @@ func (c *PrometheusClient) PrometheusQueryWithStatus(query string, status int) (
 
 // PrometheusTargets runs an HTTP GET request against the Prometheus targets API and returns
 // the response body.
-func (c *PrometheusClient) PrometheusTargets() ([]byte, error) {
+func (c *Client) PrometheusTargets() ([]byte, error) {
 	resp, err := c.Do("GET", "/api/v1/targets", nil)
 	if err != nil {
 		return nil, err
@@ -199,7 +205,7 @@ func (c *PrometheusClient) PrometheusTargets() ([]byte, error) {
 
 // PrometheusRules runs an HTTP GET request against the Prometheus rules API and returns
 // the response body.
-func (c *PrometheusClient) PrometheusRules() ([]byte, error) {
+func (c *Client) PrometheusRules() ([]byte, error) {
 	resp, err := c.Do("GET", "/api/v1/rules", nil)
 	if err != nil {
 		return nil, err
@@ -222,7 +228,7 @@ func (c *PrometheusClient) PrometheusRules() ([]byte, error) {
 
 // PrometheusLabel runs an HTTP GET request against the Prometheus label API and returns
 // the response body.
-func (c *PrometheusClient) PrometheusLabel(label string) ([]byte, error) {
+func (c *Client) PrometheusLabel(label string) ([]byte, error) {
 	resp, err := c.Do("GET", fmt.Sprintf("/api/v1/label/%s/values", url.QueryEscape(label)), nil)
 	if err != nil {
 		return nil, err
@@ -245,17 +251,17 @@ func (c *PrometheusClient) PrometheusLabel(label string) ([]byte, error) {
 
 // GetAlertmanagerAlerts runs an HTTP GET request against the Alertmanager
 // /api/v2/alerts endpoint and returns the response body.
-func (c *PrometheusClient) GetAlertmanagerAlerts(kvs ...string) ([]byte, error) {
+func (c *Client) GetAlertmanagerAlerts(kvs ...string) ([]byte, error) {
 	return c.getAlertmanager("/api/v2/alerts", kvs...)
 }
 
 // GetAlertmanagerSilences runs an HTTP GET request against the Alertmanager
 // /api/v2/silences endpoint and returns the response body.
-func (c *PrometheusClient) GetAlertmanagerSilences(kvs ...string) ([]byte, error) {
+func (c *Client) GetAlertmanagerSilences(kvs ...string) ([]byte, error) {
 	return c.getAlertmanager("/api/v2/silences", kvs...)
 }
 
-func (c *PrometheusClient) getAlertmanager(path string, kvs ...string) ([]byte, error) {
+func (c *Client) getAlertmanager(path string, kvs ...string) ([]byte, error) {
 	q := make(url.Values)
 	for i := 0; i < len(kvs)/2; i++ {
 		q.Add(kvs[i*2], kvs[i*2+1])
@@ -338,7 +344,7 @@ func GetResultSizeFromPromQuery(body []byte) (int, error) {
 }
 
 // WaitForQueryReturnGreaterEqualOne see WaitForQueryReturn.
-func (c *PrometheusClient) WaitForQueryReturnGreaterEqualOne(t *testing.T, timeout time.Duration, query string) {
+func (c *Client) WaitForQueryReturnGreaterEqualOne(t *testing.T, timeout time.Duration, query string) {
 	t.Helper()
 
 	c.WaitForQueryReturn(t, timeout, query, func(v float64) error {
@@ -351,7 +357,7 @@ func (c *PrometheusClient) WaitForQueryReturnGreaterEqualOne(t *testing.T, timeo
 }
 
 // WaitForQueryReturnOne see WaitForQueryReturn.
-func (c *PrometheusClient) WaitForQueryReturnOne(t *testing.T, timeout time.Duration, query string) {
+func (c *Client) WaitForQueryReturnOne(t *testing.T, timeout time.Duration, query string) {
 	t.Helper()
 
 	c.WaitForQueryReturn(t, timeout, query, func(v float64) error {
@@ -365,7 +371,7 @@ func (c *PrometheusClient) WaitForQueryReturnOne(t *testing.T, timeout time.Dura
 
 // WaitForQueryReturn waits for a given PromQL query for a given time interval
 // and validates the **first and only** result with the given validate function.
-func (c *PrometheusClient) WaitForQueryReturn(t *testing.T, timeout time.Duration, query string, validate func(float64) error) {
+func (c *Client) WaitForQueryReturn(t *testing.T, timeout time.Duration, query string, validate func(float64) error) {
 	t.Helper()
 
 	err := Poll(5*time.Second, timeout, func() error {
@@ -392,7 +398,7 @@ func (c *PrometheusClient) WaitForQueryReturn(t *testing.T, timeout time.Duratio
 }
 
 // WaitForQueryReturnEmpty waits for a given PromQL query return an empty response for a given time interval
-func (c *PrometheusClient) WaitForQueryReturnEmpty(t *testing.T, timeout time.Duration, query string) {
+func (c *Client) WaitForQueryReturnEmpty(t *testing.T, timeout time.Duration, query string) {
 	t.Helper()
 
 	err := Poll(5*time.Second, timeout, func() error {
@@ -420,7 +426,7 @@ func (c *PrometheusClient) WaitForQueryReturnEmpty(t *testing.T, timeout time.Du
 
 // WaitForRulesReturn waits for Prometheus rules for a given time interval
 // and validates the **first and only** result with the given validate function.
-func (c *PrometheusClient) WaitForRulesReturn(t *testing.T, timeout time.Duration, validate func([]byte) error) {
+func (c *Client) WaitForRulesReturn(t *testing.T, timeout time.Duration, validate func([]byte) error) {
 	t.Helper()
 
 	err := Poll(5*time.Second, timeout, func() error {
@@ -443,7 +449,7 @@ func (c *PrometheusClient) WaitForRulesReturn(t *testing.T, timeout time.Duratio
 
 // WaitForTargetsReturn waits for Prometheus targets for a given time interval
 // and returns successfully if the validate function doesn't return an error.
-func (c *PrometheusClient) WaitForTargetsReturn(t *testing.T, timeout time.Duration, validate func([]byte) error) {
+func (c *Client) WaitForTargetsReturn(t *testing.T, timeout time.Duration, validate func([]byte) error) {
 	t.Helper()
 
 	err := Poll(5*time.Second, timeout, func() error {
@@ -462,4 +468,28 @@ func (c *PrometheusClient) WaitForTargetsReturn(t *testing.T, timeout time.Durat
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Poll calls the given function f every given interval
+// until it returns no error or the given timeout occurs.
+// If a timeout occurs, the last observed error is returned
+// or wait.ErrWaitTimeout if no error occurred.
+func Poll(interval, timeout time.Duration, f func() error) error {
+	var lastErr error
+
+	err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, true, func(context.Context) (bool, error) {
+		lastErr = f()
+		if lastErr != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		if wait.Interrupted(err) && lastErr != nil {
+			err = fmt.Errorf("%w: %w", err, lastErr)
+		}
+	}
+
+	return err
 }

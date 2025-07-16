@@ -464,6 +464,14 @@ func (c *Client) UpdateAlertingRuleStatus(ctx context.Context, rule *osmv1.Alert
 	return err
 }
 
+func (c *Client) ListAlertRelabelConfigs(ctx context.Context) ([]osmv1.AlertRelabelConfig, error) {
+	list, err := c.osmclient.MonitoringV1().AlertRelabelConfigs("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
 func (c *Client) CreateOrUpdateAlertRelabelConfig(ctx context.Context, arc *osmv1.AlertRelabelConfig) error {
 	arcClient := c.osmclient.MonitoringV1().AlertRelabelConfigs(arc.GetNamespace())
 	existing, err := arcClient.Get(ctx, arc.GetName(), metav1.GetOptions{})
@@ -603,12 +611,24 @@ func (c *Client) GetSecret(ctx context.Context, namespace, name string) (*v1.Sec
 	return c.kclient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
+func (c *Client) ListPrometheusRules(ctx context.Context) ([]monv1.PrometheusRule, error) {
+	list, err := c.mclient.MonitoringV1().PrometheusRules("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
 func (c *Client) GetPrometheusRule(ctx context.Context, namespace, name string) (*monv1.PrometheusRule, error) {
 	return c.mclient.MonitoringV1().PrometheusRules(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *Client) GetAlertingRule(ctx context.Context, namespace, name string) (*osmv1.AlertingRule, error) {
 	return c.osmclient.MonitoringV1().AlertingRules(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func (c *Client) GetAlertRelabelConfig(ctx context.Context, namespace, name string) (*osmv1.AlertRelabelConfig, error) {
+	return c.osmclient.MonitoringV1().AlertRelabelConfigs(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *Client) CreateOrUpdatePrometheus(ctx context.Context, p *monv1.Prometheus) error {
@@ -944,6 +964,24 @@ func (c *Client) DeletePrometheusRuleByNamespaceAndName(ctx context.Context, nam
 	// if the object does not exist then everything is good here
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("deleting PrometheusRule object failed: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Client) DeleteAlertRelabelConfigByNamespaceAndName(ctx context.Context, namespace, name string) error {
+	sclient := c.osmclient.MonitoringV1().AlertRelabelConfigs(namespace)
+
+	// Short-circuit if the resource doesn't exist (a Get is less expensive than a no-op Delete)
+	_, err := sclient.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+
+	err = sclient.Delete(ctx, name, metav1.DeleteOptions{})
+	// if the object does not exist then everything is good here
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting AlertRelabelConfig object failed: %w", err)
 	}
 
 	return nil

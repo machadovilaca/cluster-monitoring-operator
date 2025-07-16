@@ -21,6 +21,9 @@ rules:
   - get
   - list
   - watch
+  - create
+  - update
+  - patch
 - apiGroups:
   - monitoring.openshift.io
   resources:
@@ -28,3 +31,9 @@ rules:
   - alertingrules/status
   verbs:
   - '*'
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts/token
+  verbs:
+  - create

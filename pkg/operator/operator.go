@@ -47,7 +47,9 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/openshift/cluster-monitoring-operator/pkg/alert"
+	alertmanagement "github.com/openshift/cluster-monitoring-operator/pkg/alert/management"
 	"github.com/openshift/cluster-monitoring-operator/pkg/client"
+	"github.com/openshift/cluster-monitoring-operator/pkg/httpserver"
 	"github.com/openshift/cluster-monitoring-operator/pkg/manifests"
 	"github.com/openshift/cluster-monitoring-operator/pkg/metrics"
 	"github.com/openshift/cluster-monitoring-operator/pkg/tasks"
@@ -172,6 +174,8 @@ const (
 	clusterResourceName = "cluster"
 
 	UWMTaskPrefix = "UpdatingUserWorkload"
+
+	alertManagementAPIAddr = ":9000"
 )
 
 type Operator struct {
@@ -202,8 +206,9 @@ type Operator struct {
 
 	assets *manifests.Assets
 
-	ruleController    *alert.RuleController
-	relabelController *alert.RelabelConfigController
+	ruleController            *alert.RuleController
+	relabelController         *alert.RelabelConfigController
+	alertManagementController alertmanagement.Controller
 }
 
 func New(
@@ -252,6 +257,11 @@ func New(
 		return nil, fmt.Errorf("failed to create alert relabel config controller: %w", err)
 	}
 
+	alertManagementController, err := alertmanagement.NewController(ctx, c, alertManagementAPIAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create alert management controller: %w", err)
+	}
+
 	o := &Operator{
 		images:                    images,
 		telemetryMatches:          telemetryMatches,
@@ -265,12 +275,13 @@ func New(
 			workqueue.NewTypedItemExponentialFailureRateLimiter[string](50*time.Millisecond, 3*time.Minute),
 			workqueue.TypedRateLimitingQueueConfig[string]{Name: "cluster-monitoring"},
 		),
-		informers:            make([]cache.SharedIndexInformer, 0),
-		assets:               a,
-		informerFactories:    make([]informers.SharedInformerFactory, 0),
-		controllersToRunFunc: make([]func(context.Context, int), 0),
-		ruleController:       ruleController,
-		relabelController:    relabelController,
+		informers:                 make([]cache.SharedIndexInformer, 0),
+		assets:                    a,
+		informerFactories:         make([]informers.SharedInformerFactory, 0),
+		controllersToRunFunc:      make([]func(context.Context, int), 0),
+		ruleController:            ruleController,
+		relabelController:         relabelController,
+		alertManagementController: alertManagementController,
 	}
 
 	informer := cache.NewSharedIndexInformer(
@@ -541,6 +552,10 @@ func New(
 func (o *Operator) Run(ctx context.Context) error {
 	stopc := ctx.Done()
 	defer o.queue.ShutDown()
+
+	if err := httpserver.New(alertManagementAPIAddr, o.alertManagementController).Start(ctx); err != nil {
+		return fmt.Errorf("failed to start HTTP server: %w", err)
+	}
 
 	errChan := make(chan error)
 	go func() {

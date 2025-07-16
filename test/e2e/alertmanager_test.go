@@ -32,7 +32,6 @@ import (
 
 	"github.com/Jeffail/gabs/v2"
 	statusv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1beta1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1beta1"
 	amapimodels "github.com/prometheus/alertmanager/api/v2/models"
@@ -40,6 +39,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
+	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 )
 
 // TestAlertmanagerTenancyAPI ensures that the Alertmanager API exposed on the
@@ -154,7 +156,7 @@ func testAlertmanagerTenancyAPI(t *testing.T, host string) {
 	})
 
 	// Creating service accounts with different role bindings.
-	clients := make(map[string]*framework.PrometheusClient)
+	clients := make(map[string]*prometheus.Client)
 	for sa, cr := range map[string]string{
 		"editor":    "monitoring-rules-edit",
 		"viewer":    "monitoring-rules-view",
@@ -173,14 +175,14 @@ func testAlertmanagerTenancyAPI(t *testing.T, host string) {
 		}
 
 		err = framework.Poll(5*time.Second, 5*time.Minute, func() error {
-			token, err := f.GetServiceAccountToken(testNs, sa)
+			token, err := prometheus.GetServiceAccountToken(f.OperatorClient, testNs, sa)
 			if err != nil {
 				return err
 			}
-			clients[sa] = framework.NewPrometheusClient(
+			clients[sa] = prometheus.NewClientFromHostToken(
 				host,
 				token,
-				&framework.QueryParameterInjector{
+				&prometheus.QueryParameterInjector{
 					Name:  "namespace",
 					Value: testNs,
 				},
@@ -216,7 +218,7 @@ func testAlertmanagerTenancyAPI(t *testing.T, host string) {
 			}
 
 			if resp.StatusCode != expectedCode {
-				return fmt.Errorf("user[%s]: %s %s: expecting %d status code, got %d (%q)", user, resp.Request.Method, resp.Request.URL.String(), expectedCode, resp.StatusCode, framework.ClampMax(b))
+				return fmt.Errorf("user[%s]: %s %s: expecting %d status code, got %d (%q)", user, resp.Request.Method, resp.Request.URL.String(), expectedCode, resp.StatusCode, prometheus.ClampMax(b))
 			}
 
 			return nil
@@ -393,7 +395,7 @@ func TestAlertmanagerDataReplication(t *testing.T) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("expecting 200 status code, got %d (%q)", resp.StatusCode, framework.ClampMax(b))
+			return fmt.Errorf("expecting 200 status code, got %d (%q)", resp.StatusCode, prometheus.ClampMax(b))
 		}
 
 		return nil
@@ -535,18 +537,13 @@ func testAlertmanagerAPIAccess(t *testing.T) {
 			t.Logf("failed to cleanup service account %s: %v", sa, err)
 		}
 	}()
-	var client *framework.PrometheusClient
+	var client *prometheus.Client
 	err = framework.Poll(5*time.Second, time.Minute, func() error {
-		token, err := f.GetServiceAccountToken(testNamespace, sa)
-		if err != nil {
-			return err
-		}
-		client, err = framework.NewPrometheusClientFromRoute(
+		client, err = prometheus.NewClientFromRoute(
 			ctx,
-			f.OpenShiftRouteClient,
+			f.OperatorClient,
 			monitoringNamespace,
 			"alertmanager-main",
-			token,
 		)
 		if err != nil {
 			return err
@@ -625,7 +622,7 @@ func testAlertmanagerAPIAccess(t *testing.T) {
 	}
 }
 
-func checkAlertmanagerAPIVerbs(_ *testing.T, client *framework.PrometheusClient, desc string, methods map[string][2]string, allowed bool) error {
+func checkAlertmanagerAPIVerbs(_ *testing.T, client *prometheus.Client, desc string, methods map[string][2]string, allowed bool) error {
 	var sid string
 	return framework.Poll(5*time.Second, 5*time.Minute, func() error {
 		for method, v := range methods {
@@ -659,7 +656,7 @@ func checkAlertmanagerAPIVerbs(_ *testing.T, client *framework.PrometheusClient,
 				}
 				sid = silence.ID
 			}
-			body = []byte(framework.ClampMax(body))
+			body = []byte(prometheus.ClampMax(body))
 			_ = r.Body.Close()
 			if allowed {
 				if r.StatusCode != http.StatusOK {
