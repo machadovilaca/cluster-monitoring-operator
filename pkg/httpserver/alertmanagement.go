@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	alertmanagement "github.com/openshift/cluster-monitoring-operator/pkg/alert/management"
+	monv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 )
 
 const alertingRuleIdPath = "/namespaces/{namespace}/prometheusrules/{prometheusrule}/rules/{ruleName}/severities/{severity}"
@@ -45,8 +46,43 @@ func (amm *alertManagementMux) listAlertingRulesHandler(w http.ResponseWriter, _
 	http.Error(w, http.StatusText(http.StatusNotImplemented), http.StatusNotImplemented)
 }
 
-func (amm *alertManagementMux) createAlertingRuleHandler(w http.ResponseWriter, _ *http.Request) {
-	http.Error(w, http.StatusText(http.StatusNotImplemented), http.StatusNotImplemented)
+func (amm *alertManagementMux) createAlertingRuleHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	type createReq struct {
+		Namespace      string     `json:"namespace"`
+		PrometheusRule string     `json:"prometheusRule"`
+		Rule           monv1.Rule `json:"rule"`
+	}
+
+	var req createReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.Namespace == "" || req.PrometheusRule == "" || req.Rule.Alert == "" || req.Rule.Labels["severity"] == "" {
+		http.Error(w, "missing required fields: namespace, prometheusRule, ruleName, severity", http.StatusBadRequest)
+		return
+	}
+
+	arId := alertmanagement.AlertingRuleId{
+		Namespace:      req.Namespace,
+		PrometheusRule: req.PrometheusRule,
+	}
+
+	created, err := amm.alertsManagementController.CreateAlertingRule(r.Context(), arId, req.Rule, alertmanagement.Params{})
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(created); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (amm *alertManagementMux) deleteAlertingRulesHandler(w http.ResponseWriter, _ *http.Request) {
