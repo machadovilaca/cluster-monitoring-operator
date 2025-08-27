@@ -24,11 +24,12 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
+	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 )
 
 var f *framework.Framework
@@ -90,7 +91,7 @@ func testMain(m *testing.M) error {
 			return false, nil
 		}
 
-		v, loopErr = framework.GetFirstValueFromPromQuery(body)
+		v, loopErr = prometheus.GetFirstValueFromPromQuery(body)
 		if loopErr != nil {
 			loopErr = fmt.Errorf("error getting first value from prometheus response %q: %w", string(body), loopErr)
 			return false, nil

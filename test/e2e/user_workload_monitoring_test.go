@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/cert"
 
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
 	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 )
 
@@ -446,7 +447,7 @@ func assertUserWorkloadMetrics(t *testing.T) {
 			return loopErr
 		}
 
-		v, loopErr = framework.GetFirstValueFromPromQuery(body)
+		v, loopErr = prometheus.GetFirstValueFromPromQuery(body)
 		if loopErr != nil {
 			return loopErr
 		}
@@ -525,7 +526,7 @@ func assertUserWorkloadMetrics(t *testing.T) {
 			return err
 		}
 
-		v, err = framework.GetResultSizeFromPromQuery(body)
+		v, err = prometheus.GetResultSizeFromPromQuery(body)
 		if err != nil {
 			return err
 		}
@@ -567,7 +568,7 @@ func assertTenancyForMetrics(t *testing.T) {
 
 	var token string
 	err = framework.Poll(5*time.Second, 5*time.Minute, func() error {
-		token, err = f.GetServiceAccountToken(userWorkloadTestNs, testAccount)
+		token, err = prometheus.GetServiceAccountToken(f.OperatorClient, userWorkloadTestNs, testAccount)
 		if err != nil {
 			return err
 		}
@@ -637,10 +638,10 @@ func assertTenancyForMetrics(t *testing.T) {
 				}
 				defer cleanUp()
 
-				client := framework.NewPrometheusClient(
+				client := prometheus.NewClientFromHostToken(
 					host,
 					token,
-					&framework.QueryParameterInjector{
+					&prometheus.QueryParameterInjector{
 						Name:  "namespace",
 						Value: userWorkloadTestNs,
 					},
@@ -705,10 +706,10 @@ func assertTenancyForMetrics(t *testing.T) {
 			}
 			defer cleanUp()
 
-			client := framework.NewPrometheusClient(
+			client := prometheus.NewClientFromHostToken(
 				host,
 				token,
-				&framework.QueryParameterInjector{
+				&prometheus.QueryParameterInjector{
 					Name:  "namespace",
 					Value: userWorkloadTestNs,
 				},
@@ -726,7 +727,7 @@ func assertTenancyForMetrics(t *testing.T) {
 			}
 
 			if resp.StatusCode/100 == 2 {
-				return fmt.Errorf("expected request to be rejected, but got status code %d (%s)", resp.StatusCode, framework.ClampMax(b))
+				return fmt.Errorf("expected request to be rejected, but got status code %d (%s)", resp.StatusCode, prometheus.ClampMax(b))
 			}
 
 			return nil
@@ -820,10 +821,10 @@ func assertTenancyForMetrics(t *testing.T) {
 			defer cleanUp()
 
 			// Create a Prometheus client with the test SA token.
-			client := framework.NewPrometheusClient(
+			client := prometheus.NewClientFromHostToken(
 				host,
 				token,
-				&framework.QueryParameterInjector{
+				&prometheus.QueryParameterInjector{
 					Name:  "namespace",
 					Value: userWorkloadTestNs,
 				},
@@ -878,7 +879,7 @@ func assertTenancyForRulesAndAlerts(t *testing.T) {
 
 	var token string
 	err = framework.Poll(5*time.Second, 5*time.Minute, func() error {
-		token, err = f.GetServiceAccountToken(userWorkloadTestNs, testAccount)
+		token, err = prometheus.GetServiceAccountToken(f.OperatorClient, userWorkloadTestNs, testAccount)
 		if err != nil {
 			return err
 		}
@@ -896,10 +897,10 @@ func assertTenancyForRulesAndAlerts(t *testing.T) {
 	}
 	defer cleanUp()
 
-	client := framework.NewPrometheusClient(
+	client := prometheus.NewClientFromHostToken(
 		host,
 		token,
-		&framework.QueryParameterInjector{
+		&prometheus.QueryParameterInjector{
 			Name:  "namespace",
 			Value: userWorkloadTestNs,
 		},
@@ -918,7 +919,7 @@ func assertTenancyForRulesAndAlerts(t *testing.T) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, framework.ClampMax(b))
+			return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, prometheus.ClampMax(b))
 		}
 
 		res, err := gabs.ParseJSON(b)
@@ -1004,7 +1005,7 @@ func assertTenancyForRulesAndAlerts(t *testing.T) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, framework.ClampMax(b))
+			return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, prometheus.ClampMax(b))
 		}
 		return nil
 	})
@@ -1027,7 +1028,7 @@ func assertTenancyForRulesAndAlerts(t *testing.T) {
 			}
 
 			if resp.StatusCode/100 == 2 {
-				return fmt.Errorf("unexpected status code response, got %d (%s)", resp.StatusCode, framework.ClampMax(b))
+				return fmt.Errorf("unexpected status code response, got %d (%s)", resp.StatusCode, prometheus.ClampMax(b))
 			}
 
 			return nil
@@ -1109,7 +1110,7 @@ func assertUWMFederateEndpoint(t *testing.T) {
 
 	var token string
 	err = framework.Poll(5*time.Second, time.Minute, func() error {
-		token, err = f.GetServiceAccountToken(userWorkloadTestNs, testAccount)
+		token, err = prometheus.GetServiceAccountToken(f.OperatorClient, userWorkloadTestNs, testAccount)
 		return err
 	})
 	if err != nil {
@@ -1119,10 +1120,10 @@ func assertUWMFederateEndpoint(t *testing.T) {
 	// check /federate endpoint
 	err = framework.Poll(5*time.Second, time.Minute, func() error {
 		federate := func(host string) error {
-			client := framework.NewPrometheusClient(
+			client := prometheus.NewClientFromHostToken(
 				host,
 				token,
-				&framework.QueryParameterInjector{
+				&prometheus.QueryParameterInjector{
 					Name:  "match[]",
 					Value: `up`,
 				},
@@ -1139,11 +1140,11 @@ func assertUWMFederateEndpoint(t *testing.T) {
 				return err
 			}
 			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, framework.ClampMax(b))
+				return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, prometheus.ClampMax(b))
 			}
 
 			if !strings.Contains(string(b), "up") {
-				return fmt.Errorf("'up' metric is missing, got (%s)", framework.ClampMax(b))
+				return fmt.Errorf("'up' metric is missing, got (%s)", prometheus.ClampMax(b))
 			}
 
 			return nil
@@ -1206,7 +1207,7 @@ func assertTenancyForSeriesMetadata(t *testing.T) {
 
 	var token string
 	err = framework.Poll(5*time.Second, time.Minute, func() error {
-		token, err = f.GetServiceAccountToken(userWorkloadTestNs, testAccount)
+		token, err = prometheus.GetServiceAccountToken(f.OperatorClient, userWorkloadTestNs, testAccount)
 		return err
 	})
 	if err != nil {
@@ -1223,10 +1224,10 @@ func assertTenancyForSeriesMetadata(t *testing.T) {
 		}
 		defer cleanUp()
 
-		client := framework.NewPrometheusClient(
+		client := prometheus.NewClientFromHostToken(
 			host,
 			token,
-			&framework.QueryParameterInjector{
+			&prometheus.QueryParameterInjector{
 				Name:  "namespace",
 				Value: userWorkloadTestNs,
 			},
@@ -1244,7 +1245,7 @@ func assertTenancyForSeriesMetadata(t *testing.T) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, framework.ClampMax(b))
+			return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, prometheus.ClampMax(b))
 		}
 
 		res, err := gabs.ParseJSON(b)
@@ -1277,10 +1278,10 @@ func assertTenancyForSeriesMetadata(t *testing.T) {
 		}
 		defer cleanUp()
 
-		client := framework.NewPrometheusClient(
+		client := prometheus.NewClientFromHostToken(
 			host,
 			token,
-			&framework.QueryParameterInjector{
+			&prometheus.QueryParameterInjector{
 				Name:  "namespace",
 				Value: userWorkloadTestNs,
 			},
@@ -1298,7 +1299,7 @@ func assertTenancyForSeriesMetadata(t *testing.T) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, framework.ClampMax(b))
+			return fmt.Errorf("unexpected status code response, want %d, got %d (%s)", http.StatusOK, resp.StatusCode, prometheus.ClampMax(b))
 		}
 
 		res, err := gabs.ParseJSON(b)
@@ -1312,7 +1313,7 @@ func assertTenancyForSeriesMetadata(t *testing.T) {
 		}
 
 		if len(series) != 1 {
-			return fmt.Errorf("expecting a series list with one item, got %d (%s)", len(series), framework.ClampMax(b))
+			return fmt.Errorf("expecting a series list with one item, got %d (%s)", len(series), prometheus.ClampMax(b))
 		}
 
 		return nil
@@ -1331,10 +1332,10 @@ func assertTenancyForSeriesMetadata(t *testing.T) {
 		}
 		defer cleanUp()
 
-		client := framework.NewPrometheusClient(
+		client := prometheus.NewClientFromHostToken(
 			host,
 			token,
-			&framework.QueryParameterInjector{
+			&prometheus.QueryParameterInjector{
 				Name:  "namespace",
 				Value: userWorkloadTestNs,
 			},

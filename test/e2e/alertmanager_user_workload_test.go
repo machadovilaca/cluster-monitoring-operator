@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
 	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 )
 
@@ -69,7 +70,7 @@ func assertUWMAlertsAccess(t *testing.T) {
 
 	var token string
 	err = framework.Poll(5*time.Second, time.Minute, func() error {
-		token, err = f.GetServiceAccountToken(userWorkloadTestNs, testAccount)
+		token, err = prometheus.GetServiceAccountToken(f.OperatorClient, userWorkloadTestNs, testAccount)
 		if err != nil {
 			return err
 		}
@@ -88,7 +89,7 @@ func assertUWMAlertsAccess(t *testing.T) {
 		}
 		defer cleanUp()
 
-		client := framework.NewPrometheusClient(host, token)
+		client := prometheus.NewClientFromHostToken(host, token)
 		resp, err := client.Do("GET", "/api/v2/alerts", nil)
 		if err != nil {
 			return err
@@ -101,7 +102,7 @@ func assertUWMAlertsAccess(t *testing.T) {
 		}
 
 		if resp.StatusCode != http.StatusForbidden {
-			return fmt.Errorf("unexpected status code response, want different of %d, (%s)", http.StatusOK, framework.ClampMax(b))
+			return fmt.Errorf("unexpected status code response, want different of %d, (%s)", http.StatusOK, prometheus.ClampMax(b))
 		}
 		return nil
 	})

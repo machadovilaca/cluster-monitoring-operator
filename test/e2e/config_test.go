@@ -26,14 +26,15 @@ import (
 
 	"github.com/Jeffail/gabs"
 	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/cluster-monitoring-operator/pkg/client"
-	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
-	"github.com/stretchr/testify/require"
-
 	monv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/openshift/cluster-monitoring-operator/pkg/client"
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
+	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 )
 
 func TestClusterMonitoringOperatorConfiguration(t *testing.T) {
@@ -807,7 +808,7 @@ func checkMonitorConsolePluginReachable(t *testing.T, pluginName string) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("expected status %d, got %d (%q)", resp.StatusCode, http.StatusOK, framework.ClampMax(b))
+			return fmt.Errorf("expected status %d, got %d (%q)", resp.StatusCode, http.StatusOK, prometheus.ClampMax(b))
 		}
 
 		res, err := gabs.ParseJSON(b)

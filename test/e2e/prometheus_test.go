@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	osConfigv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
 	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 )
 
@@ -172,12 +173,11 @@ func TestPrometheusRemoteWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prometheusReceiveClient, err := framework.NewPrometheusClientFromRoute(
+	prometheusReceiveClient, err := prometheus.NewClientFromRoute(
 		ctx,
-		f.OpenShiftRouteClient,
+		f.OperatorClient,
 		route.Namespace,
-		route.Name,
-		"")
+		route.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestPrometheusRemoteWrite(t *testing.T) {
 	}
 }
 
-func remoteWriteCheckMetrics(ctx context.Context, t *testing.T, promClient *framework.PrometheusClient, tests []remoteWriteTest) {
+func remoteWriteCheckMetrics(ctx context.Context, t *testing.T, promClient *prometheus.Client, tests []remoteWriteTest) {
 	for _, test := range tests {
 		promClient.WaitForQueryReturn(
 			t, 6*time.Minute, test.query,

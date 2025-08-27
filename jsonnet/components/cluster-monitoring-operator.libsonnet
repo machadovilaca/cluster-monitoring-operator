@@ -346,7 +346,7 @@ function(params) {
       {
         apiGroups: ['monitoring.openshift.io'],
         resources: ['alertingrules', 'alertrelabelconfigs'],
-        verbs: ['get', 'list', 'watch'],
+        verbs: ['get', 'list', 'watch', 'create', 'update', 'patch'],
       },
       {
         apiGroups: ['monitoring.openshift.io'],

@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 
 	"github.com/imdario/mergo"
@@ -35,10 +36,6 @@ import (
 	routev1 "github.com/openshift/client-go/route/clientset/versioned/typed/route/v1"
 	"github.com/openshift/cluster-monitoring-operator/pkg/client"
 	"github.com/openshift/cluster-monitoring-operator/pkg/manifests"
-	authenticationv1 "k8s.io/api/authentication/v1"
-	clocktesting "k8s.io/utils/clock/testing"
-	"k8s.io/utils/ptr"
-
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1beta1"
 	monClient "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned/typed/monitoring/v1"
@@ -56,6 +53,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	apiservicesclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
+	clocktesting "k8s.io/utils/clock/testing"
 )
 
 const E2eServiceAccount = "cluster-monitoring-operator-e2e"
@@ -71,9 +69,9 @@ type Framework struct {
 	OpenShiftConfigClient openshiftconfigclientset.Interface
 	OpenShiftRouteClient  *routev1.RouteV1Client
 	KubeClient            kubernetes.Interface
-	ThanosQuerierClient   *PrometheusClient
-	PrometheusK8sClient   *PrometheusClient
-	AlertmanagerClient    *PrometheusClient
+	ThanosQuerierClient   *prometheus.Client
+	PrometheusK8sClient   *prometheus.Client
+	AlertmanagerClient    *prometheus.Client
 	APIServicesClient     *apiservicesclient.Clientset
 	AdmissionClient       *admissionclient.AdmissionregistrationV1Client
 	MetricsClient         *metricsclient.Clientset
@@ -202,37 +200,29 @@ func New(kubeConfigPath string) (*Framework, CleanUpFunc, error) {
 		return nil, nil, fmt.Errorf("failed to setup test framework: %w", err)
 	}
 
-	token, err := f.GetServiceAccountToken(namespaceName, E2eServiceAccount)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	// Prometheus client depends on setup above.
-	f.ThanosQuerierClient, err = NewPrometheusClientFromRoute(
+	f.ThanosQuerierClient, err = prometheus.NewClientFromRoute(
 		ctx,
-		openshiftRouteClient,
+		operatorClient,
 		namespaceName, "thanos-querier",
-		token,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating ThanosQuerierClient failed: %w", err)
 	}
 
-	f.PrometheusK8sClient, err = NewPrometheusClientFromRoute(
+	f.PrometheusK8sClient, err = prometheus.NewClientFromRoute(
 		ctx,
-		openshiftRouteClient,
+		operatorClient,
 		namespaceName, "prometheus-k8s",
-		token,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating PrometheusK8sClient failed: %w", err)
 	}
 
-	f.AlertmanagerClient, err = NewPrometheusClientFromRoute(
+	f.AlertmanagerClient, err = prometheus.NewClientFromRoute(
 		ctx,
-		openshiftRouteClient,
+		operatorClient,
 		namespaceName, "alertmanager-main",
-		token,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating AlertmanagerClient failed: %w", err)
@@ -323,39 +313,6 @@ func (f *Framework) CreateServiceAccount(namespace, serviceAccount string) (Clea
 	return func() error {
 		return f.KubeClient.CoreV1().ServiceAccounts(namespace).Delete(ctx, sa.Name, metav1.DeleteOptions{})
 	}, nil
-}
-
-func (f *Framework) GetServiceAccountToken(namespace, name string) (string, error) {
-	var (
-		ctx             = context.Background()
-		token           string
-		tokenExpiration = time.Duration(time.Hour * 12)
-		expirationTime  = metav1.NewTime(time.Now().Add(tokenExpiration))
-	)
-	err := Poll(time.Second, time.Minute, func() error {
-		tokenReq, err := f.KubeClient.CoreV1().ServiceAccounts(namespace).CreateToken(
-			ctx,
-			name,
-			&authenticationv1.TokenRequest{
-				Spec: authenticationv1.TokenRequestSpec{
-					ExpirationSeconds: ptr.To(int64((tokenExpiration + time.Minute) / time.Second)),
-				},
-			},
-			metav1.CreateOptions{},
-		)
-		if err != nil {
-			return err
-		}
-
-		if tokenReq.Status.ExpirationTimestamp.Before(&expirationTime) {
-			return fmt.Errorf("expiration too short: %v < %v", tokenReq.Status.ExpirationTimestamp, expirationTime)
-		}
-
-		token = tokenReq.Status.Token
-		return nil
-	})
-
-	return token, err
 }
 
 func (f *Framework) GetLogs(namespace string, podName, containerName string) (string, error) {

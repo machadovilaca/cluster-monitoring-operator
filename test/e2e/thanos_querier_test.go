@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
 	"github.com/openshift/cluster-monitoring-operator/test/e2e/framework"
 )
 
@@ -82,7 +83,7 @@ func TestMonitoringApiRoles(t *testing.T) {
 
 }
 
-func makePromClientWithSA(saName string, t *testing.T) (clientTQ *framework.PrometheusClient, err error) {
+func makePromClientWithSA(saName string, t *testing.T) (clientTQ *prometheus.Client, err error) {
 
 	cf, err := f.CreateServiceAccount(testNamespaceTQ, saName)
 	if err != nil {
@@ -96,16 +97,11 @@ func makePromClientWithSA(saName string, t *testing.T) (clientTQ *framework.Prom
 	})
 
 	err = framework.Poll(5*time.Second, 5*time.Minute, func() error {
-		token, err := f.GetServiceAccountToken(testNamespaceTQ, saName)
-		if err != nil {
-			return err
-		}
-		clientTQ, err = framework.NewPrometheusClientFromRoute(
+		clientTQ, err = prometheus.NewClientFromRoute(
 			context.Background(),
-			f.OpenShiftRouteClient,
+			f.OperatorClient,
 			f.Ns,
 			routeNameTQ,
-			token,
 		)
 		if err != nil {
 			return err
