@@ -8,14 +8,17 @@ import (
 	monv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-monitoring-operator/pkg/client"
 	"github.com/openshift/cluster-monitoring-operator/pkg/prometheus"
 )
 
 const (
-	resourceOwnerLabelKey   = "cmo.openshift.io/owner"
-	resourceOwnerLabelValue = "alert-management"
+	ResourceOwnerLabelKey   = "cmo.openshift.io/owner"
+	ResourceOwnerLabelValue = "alert-management"
+
+	PrometheusRuleGroupName = "cmo-alert-management"
 )
 
 type Controller interface {
@@ -45,22 +48,45 @@ func NewController(ctx context.Context, client *client.Client, serverAddr string
 
 // private
 
-func (c *ControllerImpl) savePrometheusRule(ctx context.Context, namespace string, name string, rules []monv1.Rule) error {
-	prometheusRule, err := c.Client.GetPrometheusRule(ctx, namespace, name)
+func (c *ControllerImpl) getPrometheusRule(ctx context.Context, namespace string, name string) (*monv1.PrometheusRule, bool, error) {
+	pr, err := c.Client.GetPrometheusRule(ctx, namespace, name)
 	if err != nil && !apierrors.IsNotFound(err) {
+		klog.Errorf("error getting PrometheusRule %s/%s: %v", namespace, name, err)
+		return nil, false, err
+	}
+
+	if pr == nil || pr.Name == "" {
+		return nil, false, nil
+	}
+
+	return pr, true, nil
+}
+
+func isCMOManagedPrometheusRule(pr *monv1.PrometheusRule) bool {
+	if val, ok := pr.Labels[ResourceOwnerLabelKey]; !ok || val != ResourceOwnerLabelValue {
+		return false
+	}
+
+	return true
+}
+
+func (c *ControllerImpl) savePrometheusRule(ctx context.Context, namespace string, name string, rules []monv1.Rule) error {
+	pr, found, err := c.getPrometheusRule(ctx, namespace, name)
+	if err != nil {
+		klog.Errorf("error getting PrometheusRule %s/%s: %v", namespace, name, err)
 		return err
 	}
 
-	if prometheusRule != nil {
-		// If the PrometheusRule already exists
-		// Check if it has the cmo.openshift.io/owner label
-		if val, ok := prometheusRule.Labels[resourceOwnerLabelKey]; !ok || val != resourceOwnerLabelValue {
-			return errors.New("PrometheusRule already exists and is not managed by CMO alert management")
-		}
+	if found && !isCMOManagedPrometheusRule(pr) {
+		return errors.New("PrometheusRule already exists and is not managed by CMO alert management")
 	}
 
 	if len(rules) == 0 {
-		return c.Client.DeletePrometheusRuleByNamespaceAndName(ctx, namespace, name)
+		if found {
+			return c.Client.DeletePrometheusRuleByNamespaceAndName(ctx, namespace, name)
+		} else {
+			return nil
+		}
 	}
 
 	newPR := &monv1.PrometheusRule{
@@ -68,7 +94,7 @@ func (c *ControllerImpl) savePrometheusRule(ctx context.Context, namespace strin
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				resourceOwnerLabelKey: resourceOwnerLabelValue,
+				ResourceOwnerLabelKey: ResourceOwnerLabelValue,
 			},
 		},
 		Spec: monv1.PrometheusRuleSpec{
@@ -93,7 +119,7 @@ func (c *ControllerImpl) saveAlertRelabelConfig(ctx context.Context, namespace s
 	if relabelConfig != nil {
 		// If the AlertRelabelConfig already exists
 		// Check if it has the cmo.openshift.io/owner label
-		if val, ok := relabelConfig.Labels[resourceOwnerLabelKey]; !ok || val != resourceOwnerLabelValue {
+		if val, ok := relabelConfig.Labels[ResourceOwnerLabelKey]; !ok || val != ResourceOwnerLabelValue {
 			return errors.New("AlertRelabelConfig already exists and is not managed by CMO alert management")
 		}
 	}
@@ -107,7 +133,7 @@ func (c *ControllerImpl) saveAlertRelabelConfig(ctx context.Context, namespace s
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				resourceOwnerLabelKey: resourceOwnerLabelValue,
+				ResourceOwnerLabelKey: ResourceOwnerLabelValue,
 			},
 		},
 		Spec: osmv1.AlertRelabelConfigSpec{

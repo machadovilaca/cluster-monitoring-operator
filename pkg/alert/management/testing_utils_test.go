@@ -4,8 +4,11 @@ import (
 	"context"
 
 	osmv1 "github.com/openshift/api/monitoring/v1"
+	"github.com/openshift/cluster-monitoring-operator/pkg/alert/management"
 	monv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 const (
@@ -17,6 +20,12 @@ const (
 type mockClient struct {
 	existingRelabelConfig   []osmv1.RelabelConfig
 	existingPrometheusRules []monv1.Rule
+
+	// Behavior flags for PrometheusRule retrieval
+	getPRReturnNotFound bool
+	getPRReturnErr      error
+	getPRNotManaged     bool
+	getPRHasCMOGroup    bool
 
 	createOrUpdateAlertRelabelConfigCalled bool
 	deleteRelabelConfigError               error
@@ -38,13 +47,13 @@ func (m *mockClient) ListPrometheusRules(ctx context.Context) ([]monv1.Prometheu
 				Name:      testAlertName,
 				Namespace: testNamespace,
 				Labels: map[string]string{
-					"cmo.openshift.io/owner": "alert-management",
+					management.ResourceOwnerLabelKey: management.ResourceOwnerLabelValue,
 				},
 			},
 			Spec: monv1.PrometheusRuleSpec{
 				Groups: []monv1.RuleGroup{
 					{
-						Name:  "test-group",
+						Name:  management.PrometheusRuleGroupName,
 						Rules: m.existingPrometheusRules,
 					},
 				},
@@ -54,18 +63,35 @@ func (m *mockClient) ListPrometheusRules(ctx context.Context) ([]monv1.Prometheu
 }
 
 func (m *mockClient) GetPrometheusRule(ctx context.Context, namespace, name string) (*monv1.PrometheusRule, error) {
+	if m.getPRReturnErr != nil {
+		return nil, m.getPRReturnErr
+	}
+	if m.getPRReturnNotFound {
+		return nil, apierrors.NewNotFound(schema.GroupResource{Group: "monitoring.coreos.com", Resource: "prometheusrules"}, name)
+	}
+
+	labels := map[string]string{}
+	if m.getPRNotManaged {
+		labels[management.ResourceOwnerLabelKey] = "someone-else"
+	} else {
+		labels[management.ResourceOwnerLabelKey] = management.ResourceOwnerLabelValue
+	}
+
+	groupName := "test-group"
+	if m.getPRHasCMOGroup {
+		groupName = management.PrometheusRuleGroupName
+	}
+
 	return &monv1.PrometheusRule{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
-			Labels: map[string]string{
-				"cmo.openshift.io/owner": "alert-management",
-			},
+			Labels:    labels,
 		},
 		Spec: monv1.PrometheusRuleSpec{
 			Groups: []monv1.RuleGroup{
 				{
-					Name:  "test-group",
+					Name:  groupName,
 					Rules: m.existingPrometheusRules,
 				},
 			},
@@ -90,7 +116,7 @@ func (m *mockClient) ListAlertRelabelConfigs(ctx context.Context) ([]osmv1.Alert
 				Name:      testAlertName,
 				Namespace: testNamespace,
 				Labels: map[string]string{
-					"cmo.openshift.io/owner": "alert-management",
+					management.ResourceOwnerLabelKey: management.ResourceOwnerLabelValue,
 				},
 			},
 			Spec: osmv1.AlertRelabelConfigSpec{
